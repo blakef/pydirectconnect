@@ -273,8 +273,7 @@ class DirectConnect(object):
 		"""Will wait until all P2P connections have closed"""
 
 		for t in reversed(threading.enumerate()[1:]):
-			#debug("Waiting: %s" % t.getName())
-			print "Waiting: %s" % t.getName()
+			debug("Waiting: %s" % t.getName())
 			t.join()
 	
 	def getFile(self, user, file, type=FILE_REGULAR, target='./'):
@@ -377,7 +376,8 @@ class Core(threading.Thread):
 	def removeUser(self, data):
 		"""Drops a user from the local list when they sign out"""
 
-		del(self.dc.userlist[data.strip()])
+		if data.strip() in self.dc.userlist:
+			del(self.dc.userlist[data.strip()])
 
 	def addUsers(self, data):
 		"""Add preliminary details about a user.
