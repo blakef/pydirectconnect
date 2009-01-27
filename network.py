@@ -6,8 +6,6 @@ import random
 import threading
 from sys import exit
 from time import sleep
-from fcntl import ioctl
-from struct import pack
 from zlib import decompressobj
 
 # Possible states for a Direct Connect Client
@@ -17,10 +15,9 @@ from zlib import decompressobj
 
 class Network:
 	"""A Direct Connect Client's network operations"""
-	def __init__(self, eth):
-		self.ip = get_ip_address(eth)
+	def __init__(self, ip):
+		self.ip = ip 
 		self.state = OFFLINE
-		self.eth = eth
 		self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		self.buffer = ''
 	
@@ -60,8 +57,8 @@ class Network:
 
 
 class DirectConnectClient(Network):
-	def __init__(self, eth):
-		Network.__init__(self, eth)
+	def __init__(self, ip):
+		Network.__init__(self, ip)
 		self.socket.settimeout(CLIENT_TIMEOUT)
 
 	def connect(self, server, port):
@@ -76,8 +73,8 @@ class DirectConnectClient(Network):
 
 
 class DirectConnectServer(Network):
-	def __init__(self, eth, nick):
-		Network.__init__(self, eth)
+	def __init__(self, ip, nick):
+		Network.__init__(self, ip)
 		self.socket.bind((self.ip, 0))
 		self.socket.listen(1)
 		# Thread watching
@@ -236,12 +233,12 @@ class Server(threading.Thread):
 class DirectConnect(object):
 	"""Client <-> Hub communication"""
 
-	def __init__(self, ethernet):
-		self.nw = DirectConnectClient(ethernet)
-		self.ethernet = ethernet
+	def __init__(self, settings):
+		self.nw = DirectConnectClient(settings['ip'])
+		self.ip = settings['ip']
 		self.dcServer = {}
-		self.nick = NICK
-		self.shareSize = SHARESIZE
+		self.nick = settings['nick']
+		self.shareSize = settings['sharesize']
 		self.userlist = {}
 
 	def connect(self, server):
@@ -286,7 +283,7 @@ class DirectConnect(object):
 		The listening server is assigned to an attribute 'server'.  This
 		server is threaded."""
 
-		self.server = DirectConnectServer(self.ethernet, self.nick)
+		self.server = DirectConnectServer(self.ip, self.nick)
 		ip, port = self.server.listen(user)
 		self.nw.send('$ConnectToMe %s %s:%i|' % (user, ip, port))
 
@@ -438,33 +435,6 @@ def stripCommand(string):
 	return string
 
 
-def get_ip_address(ifname):
-	"""Determines the IP address attached to an ethernet device.
-	
-	Taken from: http://code.activestate.com/recipes/439094/"""
-
-	SIOCGIFADDR = 0x8915
-	s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-	try:
-		return socket.inet_ntoa(ioctl(
-			s.fileno(),
-			SIOCGIFADDR,
-			pack('256s', ifname[:15])
-		)[20:24])
-	except IOError:
-		print "Unable to find network device: %s" % ifname
-		os.exit(1)
-
-def getName(source='KiffNames.list'):
-	"""Lets use a randomly generated band name, because we're all rock stars at heart.
-
-	Thanks to: http://alumni.media.mit.edu/~bwhitman/10000.html"""
-
-	f = open(source,'r')
-	# Not perfect, but random :)
-	jump = random.randrange(int(os.path.getsize(source)*0.999))
-	f.seek(jump); f.readline()
-	return f.readline().strip()
 
 # ------------------------------------------------------------------------------------------ #
 
@@ -522,34 +492,6 @@ def debug(message):
 
 # ------------------------------------------------------------------------------------------ #
 
+CLIENT_TIMEOUT = 2.0		# XXX: Required, build it into the classes
+SERVER_TIMEOUT = 5.0		# XXX: Required, build it into the classes
 DEBUG=False
-KILL=True
-
-if __name__ == '__main__':
-	if KILL:
-		f = open('dc.pid','w')
-		f.write(str(os.getpid()))
-		f.close()
-
-	NETWORK = 'eth0'
-	SERVER = ('somehub.com',411)
-	OUTPUT = 'files/'
-	NICK = getName()[:30]
-	SHARESIZE = 10*1024**3
-	CLIENT_TIMEOUT = 2.0		# XXX: Required, build it into the classes
-	SERVER_TIMEOUT = 5.0		# XXX: Required, build it into the classes
-
-	hub= DirectConnect(NETWORK)
-	hub.connect(SERVER)
-	hub.waitUntil(SYNCHRONISED)
-
-	for uinfo in hub.userlist.items():
-		if uinfo[0] != NICK:
-			hub.getFile(uinfo[0], 'files.xml.bz2', target=OUTPUT)
-			print "USER:%s %s" % uinfo
-
-	hub.quitHub()
-	hub.waitReceiveFiles()
-
-	if KILL:
-		os.remove('dc.pid')
