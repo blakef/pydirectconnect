@@ -1,0 +1,30 @@
+dcDirectConnect: A commandline direct connect client written in Python:
+-----------------------------------------------------------------------
+
+1. Introduction:
+----------------
+
+pyDirectConnect joins a host of other direct connnect (DC) clients made
+available.  The aim of this project is to allow access to automated scripts
+to a DC network, basically because we're looking to study what's on them
+and how it changes.
+
+You can, however, use it for anything unless you're an MPAA puppy or
+someone wishing to inflict similar suffering on people :).
+
+2. Where we're at:
+------------------
+
+The code is quite unstable, and really just a hack.  I wanted to get it out
+ASAP so people could clean it up as much as possible.  I've got a thesis to
+write and can no longer spend as much time on it as I wish.  Well I can,
+but my supervisor might not be a happy person.
+
+3. Using it:
+------------
+Edit network.py, you'll find a sample program.  I'll be working on
+restructuring the program.  It doesn't make sense (at the moment), and
+if the Hub doesn't play nicely it falls over quite quickly.
+
+Ciao,
+Blake
