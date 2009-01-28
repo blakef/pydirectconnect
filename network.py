@@ -309,7 +309,7 @@ class Core(threading.Thread):
 		reactor = {
 			'LOCK' 		: lambda x : self.startConnection(x),
 			'HUBNAME' 	: lambda x : self.setHubName(x),
-			'HELLO'		: lambda x : self.authenticate(),
+			'HELLO'		: lambda x : self.authenticate(x),
 			'NICKLIST' 	: lambda x : self.addUsers(x),
 			'OPLIST' 	: lambda x : self.addUsers(x),
 			'MYINFO' 	: lambda x : self.addUserInfo(x),
@@ -351,7 +351,7 @@ class Core(threading.Thread):
 		self.setName(name)
 		self.dc.dcServer['HUBNAME'] = name
 
-	def authenticate(self):
+	def authenticate(self, data):
 		"""Send all of our user information and ask for the nicklist
 
 		* Version: of the DC protocol, default is 1,0091
@@ -364,14 +364,14 @@ class Core(threading.Thread):
 			(D) Upload Slots
 		* LAN(T1): These can be a variety of settings, static for now.
 		* Final value: is the share size, we're spoofing this for now."""
-
-		self.dc.nw.send("$Version 1,0091|" + \
-		                "$GetNickList|" + \
-		                "$MyINFO $ALL %s <SuperLeech V:0.1,M:A,H:1/0/0,S:3>" % self.dc.nick + \
-		                "$ " + \
-		                "$LAN(T1).$%s@leech.us" % self.dc.nick + \
-		                "$%i$|" % self.dc.shareSize)
-		self.dc.nw.state = AUTHENTICATED
+		if data.strip() == self.dc.nick:
+			self.dc.nw.send("$Version 1,0091|" + \
+							"$GetNickList|" + \
+							"$MyINFO $ALL %s <SuperLeech V:0.1,M:A,H:1/0/0,S:3>" % self.dc.nick + \
+							"$ " + \
+							"$LAN(T1).$%s@leech.us" % self.dc.nick + \
+							"$%i$|" % self.dc.shareSize)
+			self.dc.nw.state = AUTHENTICATED
 	
 	def removeUser(self, data):
 		"""Drops a user from the local list when they sign out"""
