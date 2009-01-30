@@ -1,4 +1,108 @@
 #!/usr/bin/env python
+import states as st
+
+class UndefinedInterface(Exception): pass
+
+class DirectConnectInterface (SocketServer.BaseRequestHandler):
+	"""Everything connecting to the DC network should inherit this."""
+
+	def __init__(self):
+		self.__setState(st.C2H_STARTED)
+
+	# BaseRequestHandler
+	def handle(self): 
+		"""Parses data received from the p2p network"""
+		pass
+
+	# Private
+	def __setState(self, state):
+		"""Changes the state to something defined in states.py
+		
+		This should only be used internally.  May look at checking transitions
+		from one state to another to indicate errors, or trigger events?"""
+		self.__state = state
+
+	def __commandHandler(self):
+		"""Calls a function based on a command received from the hub.
+		
+		Once command are added using 'addCommand', this will lookup the command
+		received through 'handle'.  Implementors shouldn't have to know about this."""	
+		pass
+
+	# Public
+	def addCommand(self, ident, func):
+		"""Specify a function to be called on a command being received.
+
+		All functions should accept one paramter, with the comman payload.  For example suppose
+		the hub sends out client '$Hello Foobar|'.  This will be unwrapped, and a command added
+		as:
+
+			bob.addCommand('HELLO', somehandlerfunction)
+
+		Will then be called with:
+
+			somehandlerfunction('Foobar')
+		""" 
+		pass
+
+	# -------------------- Interfaces  --------------------  #
+	def send(self, msg):
+		"""Interface must be implemented"""
+		raise UndefinedInterface
+		
+	def quit(self):
+		"""Interface must be implemented"""
+		raise UndefinedInterface
+
+	def chat(self, msg):
+		"""Interface must be implemented"""
+		raise UndefinedInterface
+
+class Hub (DirectConnectInterface):
+	def __init__(self, hub_addr):
+		"""Opens a connection to the hub"""
+		self.__clients = []
+
+		DirectConnectInterface.__init__(self)	
+
+	# -------------------- Interfaces  --------------------  #
+
+	def send(self, msg):
+		"""Interface must be implemented"""
+		raise UndefinedInterface
+		
+	def quit(self):
+		"""Interface must be implemented"""
+		raise UndefinedInterface
+
+	def chat(self, msg):
+		"""Interface must be implemented"""
+		raise UndefinedInterface
+
+class Client (DirectConnectInterface):
+	def __init__(self, hub_addr):
+		"""Opens a p2p connection to another client."""
+		
+		# Add command handlers
+		#self.addHandler('HELLO', self.foobar)
+
+		DirectConnectInterface.__init__(self)	
+	# -------------------- Interfaces  --------------------  #
+
+	def send(self, msg):
+		"""Interface must be implemented"""
+		raise UndefinedInterface
+		
+	def quit(self):
+		"""Interface must be implemented"""
+		raise UndefinedInterface
+
+	def chat(self, msg):
+		"""Interface must be implemented"""
+		raise UndefinedInterface
+
+
+# ------------ OLD CODE BELOW, BRING TRACTORS ---------------------------------------- #
 import re
 import os
 import socket
@@ -12,6 +116,7 @@ from zlib import decompressobj
 [OFFLINE, CONNECTED, AUTHENTICATED, LISTENING, SYNCHRONISED, ABORT, QUIT] = range(7)
 # Types of downloads
 [FILE_REGULAR, FILE_TTH] = range(2)
+
 
 class Network:
 	"""A Direct Connect Client's network operations"""
