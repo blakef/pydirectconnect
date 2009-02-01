@@ -12,10 +12,23 @@
 #
 
 # Option A:
-# ClientToHub 		-	[0-99]
-C2H_STARTED			= 	0
-C2H_CONNECTED		= 	1
-# ClientToClient 	-	[100-199]
+# Fatal Exceptions	-	[ <0 ]
+CON_ERROR_FATAL		=	-2
+CON_QUIT			=	-1
+# Generic states	-	[0-99]
+CON_GENERIC			=	0
+CON_STARTED			=	1
+CON_CONNECTED		=	2
+CON_DATA_MODE		=	3
+# ClientToHub 		-	[100-199]
+C2H_GENERIC			=	100
+C2H_STARTED			= 	101
+C2H_CONNECTED		= 	102
+C2H_SYNC			=	103
+# ClientToClient 	-	[200-299]
+C2C_GENERIC			=	200
+C2C_DOWNLOAD_READY	=	201
+C2C_DOWNLOAD_DONE	=	202
 
 
 # Option B:
@@ -32,3 +45,18 @@ C2H_CONNECTED		= 	1
 #		for count, ident in enumerate(const):
 #			setattr(self, ident, count)
 #			self.__setitem__(ident, count)
+
+class State:
+	def __init__(self):
+		self.__state == None
+
+	def setState(self, state):
+		"""Changes the state to something defined in states.py
+		
+		This should only be used internally.  May look at checking transitions
+		from one state to another to indicate errors, or trigger events?"""
+
+		self.__state = state
+	
+	def getState(self): return self.__state
+
