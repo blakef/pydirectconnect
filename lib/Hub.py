@@ -1,38 +1,77 @@
 #!/usr/bin/env python
-from Interface import DirectConnectInterface
-from SocketServer import TCPServer,ThreadedTCPServer
+from Support import getKey, getLock, encode, decode
+from Interface import DirectConnectInterface, stripCommand
+from SocketServer import TCPServer,ThreadingTCPServer
+from Command import Command
 from threading import Thread
+from time import sleep
 import State as st
 import socket
 import re
 
 DEBUG=False
 
-class ConfigurationError(Exception): pass
-
-class DirectConnectServer(TCPServer):
-	"""We're going hjack the features of a TCPServer, but initiate the connection."""
-	def __init__(self, server_address, RequestHandlerClass):
-		TCPServer.__init__(self, server_address, RequestHandlerClass)
+# ------------------------------------------------------------------------------ #
+# H U B I n t e r f a c e
+# ------------------------------------------------------------------------------ #
+class HubInterface:
+	"""Wrapper for the socket connection to the hub"""
+	def __init__(self):
 		self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		self.state = st.C2H_STARTED
+		self.__buffer=''
+
+	def _socket_connect(self, address):
+		"""Please don't call these directly"""
+		self.socket.connect(address)
+		self.state = st.C2H_CONNECTED
 	
-	def get_request(self):
-		return (self.socket.connect(self.server_address), self.server_address)
+	def _socket_disconnect(self):
+		self.socket.close()
+		self.state = st.CON_QUIT
+	
+	def recv(self, bytes=4096):
+		if self.state >= st.CON_CONNECTED:
+			msg, self.__buffer = self.__buffer, ''
+			chunk = ''
 
-	def server_bind(self): pass
-	def server_activate(self): pass
+			# Receive until we timeout, get a command or data
+			while True and self.state > st.CON_QUIT:
+				if '|' in msg:
+					msg, _, self.__buffer = msg.partition('|')
+					if msg != '':
+						debug("[IN] %s" % repr(msg))
+						return stripCommand(decode(msg))
+				# Get new data
+				try:
+					chunk = self.socket.recv(bytes)
+				except socket.timeout:
+					pass
+				msg += chunk
 
-class Hub (DirectConnectInterface):
+			# Need to return something, even after quitting
+			return None
+
+	def send(self, msg):
+		self.socket.send(msg)
+		debug("[OUT] %s" % repr(msg))
+
+# ------------------------------------------------------------------------------ #
+# H U B
+# ------------------------------------------------------------------------------ #
+class Hub (HubInterface, Command):
 	"""A request handler for Direct Connect client-to-hub communication."""
-
-	def __init__(self, *args):
+	def __init__(self, settings):
 		"""Opens a connection to the hub"""
-		DirectConnectInterface.__init__(self, *args)
+		HubInterface.__init__(self)
+		Command.__init__(self)
+
+		# Keep track of various information related to the DC Hub
 		self.__clients = {}				# List of clients we're connected to
 		self.userlist = {}				# List of all clients on the hub
 		self.DC_Hub = {}
-		self.DC_Settings = None
-	
+		self.DC_Settings = settings
+
 		# Add all handlers
 		self.addCommand('LOCK', 	self.sendValidation)
 		self.addCommand('HUBNAME', 	self.setHubName)
@@ -44,50 +83,48 @@ class Hub (DirectConnectInterface):
 		self.addCommand('MSG',		self.showMessage)
 		self.addCommand('TO:', 		self.showPrivateMessage)
 
-	def connect(self, settings):
-		"""Requires a complete list of settings in a dictionary:
+	def settings(self, settings):
+		"""Add all of the server settings.
 		
-		Must include:
-		 * 'ADDRESS'	:	(ip_address, port)
-		 * 'NICK'		:	'SomeName, no spaces please'"""
-
+		At a minimum you need a dictionary with:
+		 1. 'NICK' 		:	'some nick without spaces'
+		 2. 'SHARESIZE'	:	x bytes"""
 		self.DC_Settings = settings
-		# Little fu, :)
-		self.server_close()
-		self.socket
 
-    def handle(self):
-		"""Receives commands from the hub"""
+	def handle(self):
+		"""Receives commands from the hub, don't call this directly"""
 		# Parse the raw data
-		while (self.getState() >= CON_STARTED):
+		while (self.state >= st.CON_STARTED):
 			raw = self.recv()
-			if raw is not None: self.commandHandler(*raw)
-
+			if raw not in [None, '']:
+				self.commandHandler(*raw)
+			else:
+				sleep(1)
+	
 	# ------------------Command Handlers ------------------  #
 
 	def showMessage(self, data):
 		"""Show us a message"""
-		print decode(data)
+		print message_decode(data)
 	
-	def privateMessage(self, data):
+	def showPrivateMessage(self, data):
 		mesg = data.partition('$')
 		if mesg[-1] != '':
-			self.showMessage(mesg[-1])
+			src = mesg[0].split()[-1]
+			self.showMessage("PRIVATE MESSAGE(%s): %s" % (src,mesg[-1]))
 		else:
 			debug("Error parsing the message: %s" % data)
 
 	def sendValidation(self, data):
 		"""Ask the hub if it likes our Nickname and key"""
-
 		# Get server $lock and $Pk, lock must be the first thing
 		# the Direct Connect server sends
 		lock,pk = data.split('Pk=')
 		self.DC_Hub['LOCK'], self.DC_Hub['PK'] = lock.strip(), pk.strip()
 		self.key = getKey(self.DC_Hub['LOCK'])
-		
 		# Send $Key
 		self.send('$Key %s|' % encode(self.key) + \
-		          '$ValidateNick %s|' % self.nick)
+		          '$ValidateNick %s|' % self.DC_Settings['NICK'])
 
 	def setHubName(self, data):
 		"""Keep a copy of the hubs name"""
@@ -106,19 +143,17 @@ class Hub (DirectConnectInterface):
 			(D) Upload Slots
 		* LAN(T1): These can be a variety of settings, static for now.
 		* Final value: is the share size, we're spoofing this for now."""
-
-		if data.strip() == self.nick:
+		if data.strip() == self.DC_Settings['NICK']:
 			self.send("$Version 1,0091|" + \
 					  "$GetNickList|" + \
-					  "$MyINFO $ALL %s <SuperLeech V:0.1,M:A,H:1/0/0,S:3>" % self.nick + \
+					  "$MyINFO $ALL %s <SuperLeech V:0.1,M:A,H:1/0/0,S:3>" % self.DC_Settings['NICK'] + \
 					  "$ " + \
-					  "$LAN(T1).$%s@leech.us" % self.nick + \
-					  "$%i$|" % self.shareSize)
-			self.setState(st.C2H_CONNECTED)
+					  "$LAN(T1).$%s@leech.us" % self.DC_Settings['NICK'] + \
+					  "$%i$|" % self.DC_Settings['SHARESIZE'])
+			self.state = st.C2H_CONNECTED
 	
 	def removeUser(self, data):
 		"""Drops a user from the local list when they sign out"""
-
 		if data.strip() in self.userlist:
 			del(self.userlist[data.strip()])
 
@@ -126,7 +161,6 @@ class Hub (DirectConnectInterface):
 		"""Add preliminary details about a user.
 		
 		Which is to say: their username"""
-
 		users = data.strip().split('$$')	
 		users.remove('')
 		getinfo = []
@@ -134,7 +168,7 @@ class Hub (DirectConnectInterface):
 			if user not in self.userlist:
 				getinfo.append(user)
 		if getinfo != []:
-			msg = ['$GetINFO %s %s|' % (user, self.dc.nick) for user in getinfo]
+			msg = ['$GetINFO %s %s|' % (user, self.DC_Settings['NICK']) for user in getinfo]
 			self.send(''.join(msg))
 
 	def addUserInfo(self, data):
@@ -142,7 +176,6 @@ class Hub (DirectConnectInterface):
 		
 		This has stuff like share size and netspeed.  We don't use much of this
 		for now.  More work can be done on extracting this information."""
-
 		data = [x for x in data.split('$') if x not in ['', ' ']]
 		if data != []:
 			# Note: discarding a lot of the parsed information,
@@ -150,7 +183,6 @@ class Hub (DirectConnectInterface):
 			if len(data) == 3:
 				data.insert(-1,None)
 			info, netspeed, email, sharesize = data
-			
 			# Note: We're ignoring anythong that doesn't present
 			#       a tag.  Which is to say we're only interested
 			#       in users with files.
@@ -161,47 +193,49 @@ class Hub (DirectConnectInterface):
 				nick = re.compile('^\w+').match(nick).group()
 				tag = '<'+tag
 				sharesize = int(sharesize)
-				
 				# Only these for now :)
 				self.userlist[nick] = (tag, sharesize)
 				# We've got the user list from the server
-				self.setState(st.C2H_SYNC)
-
-	# -------------------- Interfaces  --------------------  #
-
-	def send(self, msg):
-		"""Interface must be implemented"""
-		self.request.send(msg)
-		
-	def quit(self):
-		"""Interface must be implemented"""
-		self.send("$Quit %s|" % self.DC_Settings['NICK'])
-		self.setState(st.CON_QUIT)
+				self.state = st.C2H_SYNC
 
 	# ------------ Class Specific Methods -----------------  #
+
+	def connect(self, server_address):
+		"""Connect to the server, and listens for responses
+		
+		Be sure to call disconnect so the listening thread dies."""
+		self._socket_connect(server_address)
+		self._thread = Thread(target=self.handle)
+		self._thread.start()
+
+	def disconnect(self):
+		if self.state != st.CON_QUIT:
+			self.send("$Quit %s|" % self.DC_Settings['NICK'])
+			self._socket_disconnect()
+		else:
+			debug("Already disconnected from server")
 
 	def chat(self, msg, user=None):
 		"""Send the message to a person"""
 		message = "<%s>" % self.DC_Settings['NICK'] + \
-				  " %s|" % encode(msg)
+				  " %s|" % message_encode(msg)
 
 		if user is not None:
 			message = "$To: %s " % user + \
-					  "From: %s$" % self.DC_Settings['NICK'] + \
+					  "From: %s $" % self.DC_Settings['NICK'] + \
 					  message
-		if isClient(user):
-			self.request.send(encode(message))
+		if user in list(self.userlist) + [None]:
+			self.send(message)
 		else:
-			debug("Unknown user: %s" % user)
+			debug("Unknown user: %s in message:\n%s" % (user, msg))
 
 	def addClient(self, client_nick):
 		"""Creates a TCP server to listen for a p2p connection.
 		
 		A threaded TCP server is created and added to the client list."""
-
 		if self.__clients.get(client_nick) is None:
 			self.__clients[client_nick] = \
-				SocketServer.ThreadedTCPServer((self.hub_addr, 0), Client(client_nick))
+				SocketServer.ThreadingTCPServer((self.hub_addr, 0), Client(client_nick))
 			server_thread = Thread(target=self.__clients[client_nick].serve_forever)
 			# XXX: Need to investigate the difference here:
 			#server_thread.setDaemon(True)
@@ -216,58 +250,30 @@ class Hub (DirectConnectInterface):
 		"""Checks if the nick is a current client"""
 		return nick in self.__clients
 
-# ---------------------------------------------------------------
-# Miscellaneous commands:
-# ---------------------------------------------------------------
+# The encoding scheme seems to have changed from /%DCN124%/ -> &#124;
+# I've paraphrased the code from DC++: WTF were they thinking?
 
-def encode(text):
+def message_encode(text):
 	"""Removes characters reserved for the DC protocol"""
+	for test in ['&#36;','&#124;']:
+		text = text.replace(test, '&amp;')
 
 	enc = {
-		0 	: '/%DCN000%/',
-		5	: '/%DCN005%/',
-		36	: '/%DCN036%/',
-		96	: '/%DCN096%/',
-		124	: '/%DCN124%/',
-		126	: '/%DCN126%/'
+		36	: '&#36;',
+		124	: '&#124;',
 	}
 	swap = lambda x : enc.get(x,chr(x))
 	return ''.join([swap(ord(x)) for x in text])
 
-def decode(text):
+def message_decode(text):
 	"""Reverse character encoding for the DC protocol"""
-
 	dec = {
-		'/%DCN000%/' : '\x00',
-		'/%DCN005%/' : '\x05',
-		'/%DCN036%/' : '\x1a',
-		'/%DCN096%/' : '`',
-		'/%DCN124%/' : '|',
-		'/%DCN126%/' : '~'
+		'&#36;' : '$',
+		'&#124;' : '|',
 	}
 	for test in dec:
 		text = text.replace(test, dec[test])
-	return text	
+	return text.replace('&amp;','&')
 
-def getLock(length=80):
-	"""Creates a random lock
-
-	A couple of useful lenghts for various keys:
-		* Lock:	80 - 134 chars
-		* Pk:	16 chars"""
-
-	return encode(''.join([chr(random.randrange(33,127)) for x in range(length)]))
-
-def getKey(lock):
-	"""Creates a key from a supplied lock, don't forget to encode"""
-
-	lock = [ord(x) for x in lock]
-	key = []
-	for x in range(1,len(lock)):
-		key.append(lock[x-1] ^ lock[x])
-	key = [lock[0] ^ lock[-1] ^ lock[-2] ^ 5] + key
-	nibbleswap = lambda x : ((x << 4) & 240) | ((x >> 4 & 15))
-	return ''.join([chr(nibbleswap(x)) for x in key])
-
-def debug(message):
-	if DEBUG: print message
+def debug(mesg):
+	if DEBUG: print mesg

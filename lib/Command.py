@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from Support import debug
 
 class Command:
 	def __init__(self):

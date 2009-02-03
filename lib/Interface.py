@@ -1,19 +1,18 @@
 #!/usr/bin/env python
 from SocketServer import BaseRequestHandler
 from Command import Command
-import State as st
+from Support import debug, decode
 
 class UndefinedInterface(Exception): pass
 
-class DirectConnectInterface (BaseRequestHandler, st.State, Command):
+class DirectConnectInterface (BaseRequestHandler, Command):
 	"""Everything connecting to the DC network should inherit this."""
 
 	def __init__(self, *args):
-		SocketServer.BaseRequestHandler.__init__(self, *args)
-		st.State.__init__(self)
+		BaseRequestHandler.__init__(self, *args)
 		Command.__init__(self)
 
-		self.setState(st.CON_STARTED)
+		self.state = st.CON_STARTED
 		self.__buffer = ''
 
 	def recv(self, command=True, bytes=4096):
@@ -24,15 +23,15 @@ class DirectConnectInterface (BaseRequestHandler, st.State, Command):
 			            considered data.
 			* bytes   - The bytes size limit before writing to buffer"""
 
-		if self.getState in [st.CON_CONNECTED, st.C2H_CONNECTED]:
+		if self.getState() in [st.CON_CONNECTED, st.C2H_CONNECTED]:
 			msg, self.__buffer = self.__buffer, ''
 			chunk = ''
 
 			# Receive until we timeout, get a command or data
-			while True and self.getState() > st.CON_QUIT:
+			while True and self.state > st.CON_QUIT:
 				if command and '|' in msg:
 					msg, _, self.__buffer = msg.partition('|')
-					debug("[IN] %s" % repr(msg)e
+					debug("[IN] %s" % repr(msg))
 					return stripCommand(decode(msg))
 				# Get new data
 				try:

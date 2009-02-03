@@ -59,19 +59,19 @@ class Client (DirectConnectInterface):
 		"""Checks the the client will send upload to us"""
 		direction, val = data.split()
 		if direction.upper() != 'UPLOAD':
-			self.setState(st.CON_ERROR_FATAL)
+			self.state = st.CON_ERROR_FATAL
 	
 	def readyDownload(self):
 		"""$Key received, the client is ready to send"""
-		self.setState(st.C2C_DOWNLOAD_READY)
+		self.state = st.C2C_DOWNLOAD_READY
 
 	def getFile(self, filename, type=FILE_REGULAR, target='./', timeout=10):
 		self.file_mode = type
 		self.file_path = target
-		while self.getState() != st.C2C_DOWNLOAD_READY and timeout > 0:
+		while self.state != st.C2C_DOWNLOAD_READY and timeout > 0:
 			sleep(1)
 			timeout -= 1
-		if self.getState() == st.C2C_DOWNLOAD_READY:
+		if self.state == st.C2C_DOWNLOAD_READY:
 			msg = {
 				FILE_REGULAR : "$ADCGET file %s 0 -1|",
 				FILE_TTH     : "$ADCGET file TTH/%s 0 -1 ZL1|"
