@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 from Support import getKey, getLock, encode, decode
-from Interface import DirectConnectInterface, stripCommand
+from Interface import DC_Network, stripCommand
 from SocketServer import TCPServer,ThreadingTCPServer
+from Client import Client, FILE_TTH, FILE_REGULAR
 from Command import Command
 from threading import Thread
 from time import sleep
@@ -12,58 +13,13 @@ import re
 DEBUG=False
 
 # ------------------------------------------------------------------------------ #
-# H U B I n t e r f a c e
-# ------------------------------------------------------------------------------ #
-class HubInterface:
-	"""Wrapper for the socket connection to the hub"""
-	def __init__(self):
-		self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-		self.state = st.C2H_STARTED
-		self.__buffer=''
-
-	def _socket_connect(self, address):
-		"""Please don't call these directly"""
-		self.socket.connect(address)
-		self.state = st.C2H_CONNECTED
-	
-	def _socket_disconnect(self):
-		self.socket.close()
-		self.state = st.CON_QUIT
-	
-	def recv(self, bytes=4096):
-		if self.state >= st.CON_CONNECTED:
-			msg, self.__buffer = self.__buffer, ''
-			chunk = ''
-
-			# Receive until we timeout, get a command or data
-			while True and self.state > st.CON_QUIT:
-				if '|' in msg:
-					msg, _, self.__buffer = msg.partition('|')
-					if msg != '':
-						debug("[IN] %s" % repr(msg))
-						return stripCommand(decode(msg))
-				# Get new data
-				try:
-					chunk = self.socket.recv(bytes)
-				except socket.timeout:
-					pass
-				msg += chunk
-
-			# Need to return something, even after quitting
-			return None
-
-	def send(self, msg):
-		self.socket.send(msg)
-		debug("[OUT] %s" % repr(msg))
-
-# ------------------------------------------------------------------------------ #
 # H U B
 # ------------------------------------------------------------------------------ #
-class Hub (HubInterface, Command):
+class Hub (DC_Network, Command):
 	"""A request handler for Direct Connect client-to-hub communication."""
 	def __init__(self, settings):
 		"""Opens a connection to the hub"""
-		HubInterface.__init__(self)
+		DC_Network.__init__(self)
 		Command.__init__(self)
 
 		# Keep track of various information related to the DC Hub
@@ -91,6 +47,7 @@ class Hub (HubInterface, Command):
 		 2. 'SHARESIZE'	:	x bytes"""
 		self.DC_Settings = settings
 
+	# Duplicated code between Hub and Client, must be a way to join it?
 	def handle(self):
 		"""Receives commands from the hub, don't call this directly"""
 		# Parse the raw data
@@ -105,7 +62,7 @@ class Hub (HubInterface, Command):
 
 	def showMessage(self, data):
 		"""Show us a message"""
-		print message_decode(data)
+		if not DEBUG: print message_decode(data)
 	
 	def showPrivateMessage(self, data):
 		mesg = data.partition('$')
@@ -210,8 +167,13 @@ class Hub (HubInterface, Command):
 
 	def disconnect(self):
 		if self.state != st.CON_QUIT:
+			# Leave the hub
 			self.send("$Quit %s|" % self.DC_Settings['NICK'])
 			self._socket_disconnect()
+			
+			# Leave each connected peer
+			for client in self.__clients:
+				self.__clients[client].quit()
 		else:
 			debug("Already disconnected from server")
 
@@ -229,19 +191,28 @@ class Hub (HubInterface, Command):
 		else:
 			debug("Unknown user: %s in message:\n%s" % (user, msg))
 
-	def addClient(self, client_nick):
-		"""Creates a TCP server to listen for a p2p connection.
+	def downloadFile(self, client_nick, filename='files.xml.bz2', type=FILE_REGULAR, target='./'):
+		"""Creates a TCP server to listen for a p2p connection to upload
 		
 		A threaded TCP server is created and added to the client list."""
 		if self.__clients.get(client_nick) is None:
-			self.__clients[client_nick] = \
-				SocketServer.ThreadingTCPServer((self.hub_addr, 0), Client(client_nick))
-			server_thread = Thread(target=self.__clients[client_nick].serve_forever)
-			# XXX: Need to investigate the difference here:
-			#server_thread.setDaemon(True)
+			settings  = self.DC_Settings
+			settings['DOWNLOAD_FILE'] 		= filename
+			settings['DOWNLOAD_TYPE'] 		= type
+			settings['DOWNLOAD_TARGET'] 	= target
+			settings['DOWNLOAD_CLIENT'] 	= client_nick
+			client = Client(settings)
+
+			self.__clients[client_nick] = client
+			server_thread = Thread(target=self.__clients[client_nick].handle)
 			server_thread.start()
+			
+			# Need to bind to a port before the client can connect
+			#while self.__clients[client_nick].state != st.CON_LISTENING:
+				#sleep(0.1)
+
 			# Ask hub to connect the clients
-			ip, port = self.__clients[client_nick].server_address
+			ip, port = self.__clients[client_nick].socket.getsockname()
 			self.send("$ConnectToMe %s %s:%i|" % (client_nick, ip, port))
 		else:
 			debug("Client '%' already has an open connection waiting for it.")
@@ -249,6 +220,9 @@ class Hub (HubInterface, Command):
 	def isClient(self, nick):
 		"""Checks if the nick is a current client"""
 		return nick in self.__clients
+	
+	def getClient(self,nick):
+		return self.isClient(nick) and self.__clients[nick] or None
 
 # The encoding scheme seems to have changed from /%DCN124%/ -> &#124;
 # I've paraphrased the code from DC++: WTF were they thinking?

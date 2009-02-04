@@ -1,20 +1,28 @@
 #!/usr/bin/env python
-from SocketServer import BaseRequestHandler
 from Command import Command
-from Support import debug, decode
+from Support import decode
+import State as st
+import socket
 
-class UndefinedInterface(Exception): pass
+DEBUG=True
 
-class DirectConnectInterface (BaseRequestHandler, Command):
-	"""Everything connecting to the DC network should inherit this."""
-
-	def __init__(self, *args):
-		BaseRequestHandler.__init__(self, *args)
-		Command.__init__(self)
-
+class DC_Network:
+	"""Wrapper for the socket connection to the hub"""
+	def __init__(self):
+		self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		self.state = st.CON_STARTED
-		self.__buffer = ''
+		self.__buffer=''
 
+	def _socket_connect(self, address):
+		"""Please don't call these directly"""
+		self.socket.connect(address)
+		self.state = st.CON_CONNECTED
+	
+	def _socket_disconnect(self):
+		"""Please don't call these directly"""
+		self.socket.close()
+		self.state = st.CON_QUIT
+	
 	def recv(self, command=True, bytes=4096):
 		"""Receives and parses the Direct Connect Protocol
 		
@@ -23,7 +31,7 @@ class DirectConnectInterface (BaseRequestHandler, Command):
 			            considered data.
 			* bytes   - The bytes size limit before writing to buffer"""
 
-		if self.getState() in [st.CON_CONNECTED, st.C2H_CONNECTED]:
+		if self.state >= st.CON_CONNECTED:
 			msg, self.__buffer = self.__buffer, ''
 			chunk = ''
 
@@ -31,11 +39,12 @@ class DirectConnectInterface (BaseRequestHandler, Command):
 			while True and self.state > st.CON_QUIT:
 				if command and '|' in msg:
 					msg, _, self.__buffer = msg.partition('|')
-					debug("[IN] %s" % repr(msg))
-					return stripCommand(decode(msg))
+					if msg != '':
+						debug("[IN] %s" % repr(msg))
+						return stripCommand(decode(msg))
 				# Get new data
 				try:
-					chunk = self.request.recv(bytes)
+					chunk = self.socket.recv(bytes)
 				except socket.timeout:
 					pass
 				msg += chunk
@@ -47,23 +56,9 @@ class DirectConnectInterface (BaseRequestHandler, Command):
 			# Need to return something, even after quitting
 			return None
 
-	# -------------------- Interfaces  --------------------  #
-
 	def send(self, msg):
-		"""Interface must be implemented"""
-		raise UndefinedInterface
-		
-	def quit(self):
-		"""Interface must be implemented"""
-		raise UndefinedInterface
-
-	def chat(self, msg):
-		"""Interface must be implemented"""
-		raise UndefinedInterface
-
-	def handle(self): 
-		"""Parses data received from the p2p network"""
-		raise UndefinedInterface
+		self.socket.send(msg)
+		debug("[OUT] %s" % repr(msg))
 
 def stripCommand(string):
 	"""Creates a dictionary populate with command.upper -> data"""
@@ -78,3 +73,5 @@ def stripCommand(string):
 		string = (c.upper(),d)
 	return string
 
+def debug(msg):
+	if DEBUG: print msg

@@ -17,7 +17,6 @@ class Command:
 		else:
 			debug("Unknown command: %s" % repr( (command, data) ))
 
-	# Public
 	def addCommand(self, ident, func):
 		"""Specify a function to be called on a command being received.
 

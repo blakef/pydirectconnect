@@ -1,20 +1,47 @@
 #!/usr/bin/env python
-from Interface import DirectConnectInterface
+from Interface import DC_Network
+from Command import Command
+from Support import getKey
 from zlib import decompressobj
 from time import sleep
 import State as st
+import socket
 import os
 
 FILE_REGULAR	= 0xCAFE
 FILE_TTH		= 0xBABE
 
-class Client (DirectConnectInterface):
+def debug(msg):
+	print msg
+
+class DC_Client_Network(DC_Network):
+	def _socket_bind(self, address):
+		self.socket.bind(address)
+		self.socket.listen(1)
+		self.state = st.CON_LISTENING
+
+	def _socket_listen(self, timeout=10):
+		self.socket.settimeout(timeout)
+		address = None
+		try:
+			print self.socket.getsockname()
+			conn, address = self.socket.accept()
+			print conn, address
+			self.socket.close()
+			self.socket = conn
+		except socket.timeout:	
+			self.state = st.CON_QUIT
+		else:
+			self.state = st.CON_CONNECTED
+		return address
+	
+class Client (DC_Client_Network, Command):
 	"""A request handler for direct connect client-to-client communication."""
 
-	def __init__(self, *args):
+	def __init__(self, settings):
 		"""Opens a p2p connection to another client."""
-		DirectConnectInterface.__init__(self, *args)	
-
+		DC_Client_Network.__init__(self)	
+		Command.__init__(self)
 		# Add command handlers
 		self.addCommand('MYNICK',		self.setNick)
 		self.addCommand('LOCK', 		self.setLock)
@@ -24,14 +51,30 @@ class Client (DirectConnectInterface):
 		self.addCommand('KEY', 			self.readyDownload)
 		self.addCommand('ERROR', 		self.error)
 
+		self.DC_Settings = settings
+		self._socket_bind( (settings['ADDRESS'], 0) )
+
 	# -------------------- Interfaces  --------------------  #
 
-	def send(self, msg):
-		self.request.send(msg)
-
 	def quit(self):
-		# Do we need to send the client something, check state maybe?
-		self.shutdown()
+		self._socket_disconnect()
+	
+	# Duplicated code between Hub and Client, must be a way to join it?
+	def handle(self):
+		"""Handles incoming command parsing
+		
+		This only requires the (Base|TCP|ThreadedTCP)Server.handle_request() be called.  Don't
+		call handle_forever()."""
+		# Wait until the client has connected
+		user_connected = self._socket_listen()
+		debug("USER: %s connected" % repr(user_connected))
+
+		while (self.state >= st.CON_STARTED):
+			raw = self.recv()
+			if raw not in [None, '']:
+				self.commandHandler(*raw)
+			else:
+				sleep(1)
 
 	# ------------ Class Specific Methods -----------------  #
 
@@ -40,17 +83,17 @@ class Client (DirectConnectInterface):
 
 	def setLock(self, data):
 		lock,pk = data.split('Pk=')
-		self.lock, self.pk = lock.strip(), pk.strip()
+		self.DC_Settings['LOCK'], self.DC_Settings['PK'] = lock.strip(), pk.strip()
 
 		# Once we have the lock, we need to update sync with the client
 		# NOTE: We're lying about what we support at the moment.  The direction
 		#       should also generate a random number, I want always download
 		#       first.  This 'breaks' protocol.
-		self.send("$MyNick %s|" % self.conn.nick + \
-				  "$Lock %s Pk=%s|" % (self.lock, self.pk) + \
+		self.send("$MyNick %s|" % self.DC_Settings['NICK'] + \
+				  "$Lock %s Pk=%s|" % (self.DC_Settings['LOCK'], self.DC_Settings['PK']) + \
 				  "$Supports MiniSlots XmlBZList ADCGet TTHL TTHF |" + \
 				  "$Direction Download 65535|" + \
-				  "$Key %s|" % getKey(self.lock))
+				  "$Key %s|" % getKey(self.DC_Settings['LOCK']))
 	
 	def setSupports(self, data):
 		self.supports = data.split()
@@ -61,9 +104,15 @@ class Client (DirectConnectInterface):
 		if direction.upper() != 'UPLOAD':
 			self.state = st.CON_ERROR_FATAL
 	
-	def readyDownload(self):
+	def readyDownload(self, data):
 		"""$Key received, the client is ready to send"""
 		self.state = st.C2C_DOWNLOAD_READY
+		self.getFile(self.DC_Settings['DOWNLOAD_FILE'], \
+		             self.DC_Settings['DOWNLOAD_TYPE'], \
+		             self.DC_Settings['DOWNLOAD_TARGET'])
+	
+	def error(self, data):
+		debug("Unknown message: %s" % repr(data))
 
 	def getFile(self, filename, type=FILE_REGULAR, target='./', timeout=10):
 		self.file_mode = type
@@ -85,8 +134,10 @@ class Client (DirectConnectInterface):
 			self.zstream = decompressobj()
 			data = data[:-1]
 		file_type,file_ident,start,bytes = data
-		filename = os.path.join(self.file_path, \
-		                        self.client + '-' + os.path.split(file_ident)[1])
+		filename = os.path.join(self.DC_Settings['DOWNLOAD_TARGET'], \
+		                        self.DC_Settings['DOWNLOAD_CLIENT'] + \
+								'-' + \
+								os.path.split(file_ident)[1])
 		f = open(filename, 'wb')
 		file_total = int(bytes)
 		chunk_bytes = 4096
@@ -106,5 +157,6 @@ class Client (DirectConnectInterface):
 		#print "Done"
 
 		# Close the connection to the client
-		self.state = self.C2C_DOWNLOAD_DONE
+		self.state = st.C2C_DOWNLOAD_DONE
 		self.quit()
+
