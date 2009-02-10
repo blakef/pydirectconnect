@@ -4,7 +4,7 @@ from Support import decode
 import State as st
 import socket
 
-DEBUG=True
+DEBUG=False
 
 class DC_Network:
 	"""Wrapper for the socket connection to the hub"""
@@ -42,11 +42,7 @@ class DC_Network:
 					if msg != '':
 						debug("[IN] %s" % repr(msg))
 						return stripCommand(decode(msg))
-				# Get new data
-				try:
-					chunk = self.socket.recv(bytes)
-				except socket.timeout:
-					pass
+				chunk = self.socket.recv(bytes)
 				msg += chunk
 				# Make sure we've got anything left in the buffer
 				# before returning
@@ -59,6 +55,12 @@ class DC_Network:
 	def send(self, msg):
 		self.socket.send(msg)
 		debug("[OUT] %s" % repr(msg))
+	
+	def settimeout(self, seconds):
+		"""Causes the socket to timeout after a number of seconds
+
+		If you set this, be sure to wrap any call to 'recv' with 'socket.timeout' exception handling."""
+		self.socket.settimeout(seconds)
 
 def stripCommand(string):
 	"""Creates a dictionary populate with command.upper -> data"""

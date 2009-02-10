@@ -11,8 +11,7 @@ import os
 FILE_REGULAR	= 0xCAFE
 FILE_TTH		= 0xBABE
 
-def debug(msg):
-	print msg
+DEBUG=False
 
 class DC_Client_Network(DC_Network):
 	def _socket_bind(self, address):
@@ -24,9 +23,7 @@ class DC_Client_Network(DC_Network):
 		self.socket.settimeout(timeout)
 		address = None
 		try:
-			print self.socket.getsockname()
 			conn, address = self.socket.accept()
-			print conn, address
 			self.socket.close()
 			self.socket = conn
 		except socket.timeout:	
@@ -70,7 +67,11 @@ class Client (DC_Client_Network, Command):
 		debug("USER: %s connected" % repr(user_connected))
 
 		while (self.state >= st.CON_STARTED):
-			raw = self.recv()
+			try:
+				raw = self.recv()
+			except socket.timeout:
+				self.quit()
+
 			if raw not in [None, '']:
 				self.commandHandler(*raw)
 			else:
@@ -143,20 +144,36 @@ class Client (DC_Client_Network, Command):
 		chunk_bytes = 4096
 		chunk = None
 
+		write_error = False
 		try:
+			debug('%s - Filelist Started' % self.DC_Settings['DOWNLOAD_CLIENT'])
 			while file_total > 0:
 				if file_total < chunk_bytes:
 					chunk_bytes = file_total
-				chunk = self.recv(False,chunk_bytes)
+
+				try:
+					chunk = self.recv(False,chunk_bytes)
+				except socket.timeout:
+					complete = (1-file_total/float(bytes))*100
+					debug('%s' % self.DC_Settings['DOWNLOAD_CLIENT'] + \
+					      '- Filelist Downloaded interrupted at %.2f%%' % complete)
+					write_error = True
+					break	
+
 				if self.file_mode == FILE_TTH:
 					chunk = self.zstream.decompress(chunk)
-				file_total -= len(chunk)
-				f.write(chunk)
+				if chunk is not None:
+					file_total -= len(chunk)
+					f.write(chunk)
 		finally:
 			f.close()
-		#print "Done"
+			debug('%s - Filelist Downloaded' % self.DC_Settings['DOWNLOAD_CLIENT'])
 
+		if write_error:
+			os.remove(f.name)	
 		# Close the connection to the client
 		self.state = st.C2C_DOWNLOAD_DONE
 		self.quit()
 
+def debug(msg):
+	if DEBUG: print msg

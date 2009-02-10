@@ -17,25 +17,26 @@ DEBUG=False
 # ------------------------------------------------------------------------------ #
 class Hub (DC_Network, Command):
 	"""A request handler for Direct Connect client-to-hub communication."""
-	def __init__(self, settings):
+	def __init__(self, settings, client_timeout=None):
 		"""Opens a connection to the hub"""
 		DC_Network.__init__(self)
 		Command.__init__(self)
 
 		# Keep track of various information related to the DC Hub
 		self.__clients = {}				# List of clients we're connected to
-		self.userlist = {}				# List of all clients on the hub
+		self.userlist = {}				# List of all clients on the hub (DC_User objects)
 		self.DC_Hub = {}
 		self.DC_Settings = settings
+		self.client_timeout = client_timeout
 
 		# Add all handlers
 		self.addCommand('LOCK', 	self.sendValidation)
 		self.addCommand('HUBNAME', 	self.setHubName)
 		self.addCommand('HELLO', 	self.authenticate)
-		self.addCommand('NICKLIST', self.addUsers)
-		self.addCommand('OPLIST', 	self.addUsers)
+		self.addCommand('NICKLIST', self.getUserInfo)
+		self.addCommand('OPLIST', 	self.getUserInfo)
 		self.addCommand('MYINFO', 	self.addUserInfo)
-		self.addCommand('QUIT', 	self.removeUser)
+		self.addCommand('QUIT', 	self.setUserOffline)
 		self.addCommand('MSG',		self.showMessage)
 		self.addCommand('TO:', 		self.showPrivateMessage)
 
@@ -109,15 +110,14 @@ class Hub (DC_Network, Command):
 					  "$%i$|" % self.DC_Settings['SHARESIZE'])
 			self.state = st.C2H_CONNECTED
 	
-	def removeUser(self, data):
-		"""Drops a user from the local list when they sign out"""
-		if data.strip() in self.userlist:
-			del(self.userlist[data.strip()])
+	def setUserOffline(self, data):
+		"""Sets a user to offline when they sign out"""
+		user = data.strip()
+		if user in self.userlist:
+			self.userlist[user].online = False
 
-	def addUsers(self, data):
-		"""Add preliminary details about a user.
-		
-		Which is to say: their username"""
+	def getUserInfo(self, data):
+		"""Requests for a user connected to the hub"""
 		users = data.strip().split('$$')	
 		users.remove('')
 		getinfo = []
@@ -151,7 +151,10 @@ class Hub (DC_Network, Command):
 				tag = '<'+tag
 				sharesize = int(sharesize)
 				# Only these for now :)
-				self.userlist[nick] = (tag, sharesize)
+				self.userlist[nick] = DC_User(nick)
+				self.userlist[nick].sharesize = sharesize
+				self.userlist[nick].tag = tag
+				self.userlist[nick].online = True
 				# We've got the user list from the server
 				self.state = st.C2H_SYNC
 
@@ -186,7 +189,7 @@ class Hub (DC_Network, Command):
 			message = "$To: %s " % user + \
 					  "From: %s $" % self.DC_Settings['NICK'] + \
 					  message
-		if user in list(self.userlist) + [None]:
+		if user in list(self.userlist) + [None] and user.userlist[user].online:
 			self.send(message)
 		else:
 			debug("Unknown user: %s in message:\n%s" % (user, msg))
@@ -195,27 +198,34 @@ class Hub (DC_Network, Command):
 		"""Creates a TCP server to listen for a p2p connection to upload
 		
 		A threaded TCP server is created and added to the client list."""
-		if self.__clients.get(client_nick) is None:
-			settings  = self.DC_Settings
-			settings['DOWNLOAD_FILE'] 		= filename
-			settings['DOWNLOAD_TYPE'] 		= type
-			settings['DOWNLOAD_TARGET'] 	= target
-			settings['DOWNLOAD_CLIENT'] 	= client_nick
-			client = Client(settings)
+		if client_nick not in self.userlist:
+			debug("Client '%s' not on the hub." % client_nick); return
+		if not self.userlist[client_nick].online:
+			debug("Client '%s' disconnected before download started." % client_nick); return
+		if self.__clients.get(client_nick) is not None:
+			debug("Client '%s' already has an open connection waiting for it." % client_nick); return
 
-			self.__clients[client_nick] = client
-			server_thread = Thread(target=self.__clients[client_nick].handle)
-			server_thread.start()
-			
-			# Need to bind to a port before the client can connect
-			#while self.__clients[client_nick].state != st.CON_LISTENING:
-				#sleep(0.1)
+		settings  = self.DC_Settings
+		settings['DOWNLOAD_FILE'] 		= filename
+		settings['DOWNLOAD_TYPE'] 		= type
+		settings['DOWNLOAD_TARGET'] 	= target
+		settings['DOWNLOAD_CLIENT'] 	= client_nick
+		client = Client(settings)
+		# Make sure that clients exit at some stage
+		if self.client_timeout is not None:
+			client.settimeout(self.client_timeout)
 
-			# Ask hub to connect the clients
-			ip, port = self.__clients[client_nick].socket.getsockname()
-			self.send("$ConnectToMe %s %s:%i|" % (client_nick, ip, port))
-		else:
-			debug("Client '%' already has an open connection waiting for it.")
+		self.__clients[client_nick] = client
+		server_thread = Thread(target=self.__clients[client_nick].handle)
+		server_thread.start()
+		
+		# Need to bind to a port before the client can connect
+		#while self.__clients[client_nick].state != st.CON_LISTENING:
+			#sleep(0.1)
+
+		# Ask hub to connect the clients
+		ip, port = self.__clients[client_nick].socket.getsockname()
+		self.send("$ConnectToMe %s %s:%i|" % (client_nick, ip, port))
 	
 	def isClient(self, nick):
 		"""Checks if the nick is a current client"""
@@ -223,6 +233,19 @@ class Hub (DC_Network, Command):
 	
 	def getClient(self,nick):
 		return self.isClient(nick) and self.__clients[nick] or None
+
+class DC_User:
+	"""Wrapper class for each peer on DC hub"""
+	def __init__(self, nick):
+		self.nick = nick
+		self.tag = None
+		self.sharesize = None
+		self.online = True
+	
+	def __eq__(self, rhs): return self.nick == rhs
+	def __repr__(self):
+		state = self.online and "ONLINE " or "OFFLINE"
+		return "[%s] %s" % (state,self.nick)
 
 # The encoding scheme seems to have changed from /%DCN124%/ -> &#124;
 # I've paraphrased the code from DC++: WTF were they thinking?
@@ -251,3 +274,4 @@ def message_decode(text):
 
 def debug(mesg):
 	if DEBUG: print mesg
+
