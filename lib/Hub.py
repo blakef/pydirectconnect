@@ -216,7 +216,7 @@ class Hub (DC_Network, Command):
 			client.settimeout(self.client_timeout)
 
 		self.__clients[client_nick] = client
-		server_thread = Thread(target=self.__clients[client_nick].handle)
+		server_thread = Thread(target=self.__clients[client_nick].handle, name=client_nick)
 		server_thread.start()
 		
 		# Need to bind to a port before the client can connect
