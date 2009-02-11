@@ -75,7 +75,7 @@ class Client (DC_Client_Network, Command):
 			if raw not in [None, '']:
 				self.commandHandler(*raw)
 			else:
-				sleep(1)
+				sleep(0.1)
 
 	# ------------ Class Specific Methods -----------------  #
 
@@ -114,12 +114,13 @@ class Client (DC_Client_Network, Command):
 	
 	def error(self, data):
 		debug("Unknown message: %s" % repr(data))
+		self.quit()
 
 	def getFile(self, filename, type=FILE_REGULAR, target='./', timeout=10):
 		self.file_mode = type
 		self.file_path = target
 		while self.state != st.C2C_DOWNLOAD_READY and timeout > 0:
-			sleep(1)
+			sleep(0.1)
 			timeout -= 1
 		if self.state == st.C2C_DOWNLOAD_READY:
 			msg = {

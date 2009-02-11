@@ -147,7 +147,7 @@ class Hub (DC_Network, Command):
 			if '<' in info:
 				nick, tag = info.split('<')
 				nick = nick.lstrip('ALL ').strip()
-				nick = re.compile('^\w+').match(nick).group()
+				nick = re.compile('^\S+').match(nick).group()
 				tag = '<'+tag
 				sharesize = int(sharesize)
 				# Only these for now :)

@@ -15,7 +15,7 @@ class Command:
 		if react is not None:
 			react(data)
 		else:
-			debug("Unknown command: %s" % repr( (command, data) ))
+			debug("Unknown command: %s" % repr( ('[' + command + ']', data) ))
 
 	def addCommand(self, ident, func):
 		"""Specify a function to be called on a command being received.
