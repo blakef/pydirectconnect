@@ -4,6 +4,7 @@ from Command import Command
 from Support import getKey
 from zlib import decompressobj
 from time import sleep
+from copy import copy
 import State as st
 import socket
 import os
@@ -48,7 +49,7 @@ class Client (DC_Client_Network, Command):
 		self.addCommand('KEY', 			self.readyDownload)
 		self.addCommand('ERROR', 		self.error)
 
-		self.DC_Settings = settings
+		self.DC_Settings = copy(settings)
 		self._socket_bind( (settings['ADDRESS'], 0) )
 
 	# -------------------- Interfaces  --------------------  #
@@ -132,12 +133,12 @@ class Client (DC_Client_Network, Command):
 	def readyFile(self, data, buff_max=10*1024**2):
 		data = data.split()
 		if self.file_mode == FILE_TTH:
-			print "TTH MODE"
+			debug("TTH MODE")
 			self.zstream = decompressobj()
 			data = data[:-1]
 		file_type,file_ident,start,bytes = data
 		filename = os.path.join(self.DC_Settings['DOWNLOAD_TARGET'], \
-		                        self.DC_Settings['DOWNLOAD_CLIENT'] + \
+		                        self.client + \
 								'-' + \
 								os.path.split(file_ident)[1])
 		f = open(filename, 'wb')
@@ -147,7 +148,7 @@ class Client (DC_Client_Network, Command):
 
 		write_error = False
 		try:
-			debug('%s - Filelist Started' % self.DC_Settings['DOWNLOAD_CLIENT'])
+			debug('%s - Filelist Started' % self.client)
 			while file_total > 0:
 				if file_total < chunk_bytes:
 					chunk_bytes = file_total
@@ -156,7 +157,7 @@ class Client (DC_Client_Network, Command):
 					chunk = self.recv(False,chunk_bytes)
 				except socket.timeout:
 					complete = (1-file_total/float(bytes))*100
-					debug('%s' % self.DC_Settings['DOWNLOAD_CLIENT'] + \
+					debug('%s' % self.client + \
 					      '- Filelist Downloaded interrupted at %.2f%%' % complete)
 					write_error = True
 					break	
@@ -168,7 +169,7 @@ class Client (DC_Client_Network, Command):
 					f.write(chunk)
 		finally:
 			f.close()
-			debug('%s - Filelist Downloaded' % self.DC_Settings['DOWNLOAD_CLIENT'])
+			debug('%s - Filelist Downloaded' % self.client)
 
 		if write_error:
 			os.remove(f.name)	
